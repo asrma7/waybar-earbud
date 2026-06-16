@@ -90,8 +90,13 @@ By default the command prints one JSON object and exits. Use `--watch` to keep
 the process alive. In watch mode, `SIGUSR1` toggles the Bluetooth connection:
 
 ```sh
+./build/waybar-earbud --watch
 ./build/waybar-earbud --watch --mac AA:BB:CC:DD:EE:FF
 ```
+
+When `--watch` is running without `--mac`, `SIGUSR2` rediscovers the current
+Bluetooth audio output and switches to it. When `--mac` is set, `SIGUSR2` is
+ignored because the device is intentionally pinned.
 
 For Sony, `--watch` refreshes every 30 seconds unless an interval is provided:
 
@@ -101,7 +106,9 @@ For Sony, `--watch` refreshes every 30 seconds unless an interval is provided:
 
 For Sony, `SIGUSR1` calls BlueZ `Disconnect`/`Connect` and pauses polling while
 manually disconnected. For AirPods, `--watch` keeps the BlueZ Profile1/AAP
-monitor alive and uses `SIGUSR1` as the connect/disconnect toggle.
+monitor alive and uses `SIGUSR1` as the connect/disconnect toggle. `SIGUSR2` is
+handled by the top-level command before provider dispatch; it restarts unpinned
+watch mode in place so the normal audio-output discovery path runs again.
 
 ## Waybar
 
@@ -125,21 +132,23 @@ with `class: "disconnected"`:
 }
 ```
 
-AirPods can also be used as a persistent module:
+Persistent module that follows the current Bluetooth audio output:
 
 ```json
 "custom/earbuds": {
-  "exec": "/path/to/waybar-earbud --watch --mac AA:BB:CC:DD:EE:FF",
+  "exec": "/path/to/waybar-earbud --watch",
   "return-type": "json",
   "signal": 1,
-  "on-click": "pkill -SIGUSR1 waybar-earbud"
+  "on-click": "pkill -SIGUSR1 waybar-earbud",
+  "on-click-right": "pkill -SIGUSR2 waybar-earbud"
 }
 ```
 
-Manual toggle:
+Manual signals:
 
 ```sh
-pkill -SIGUSR1 waybar-earbud
+pkill -SIGUSR1 waybar-earbud  # toggle connect/disconnect
+pkill -SIGUSR2 waybar-earbud  # rediscover current audio output in unpinned watch mode
 ```
 
 ## Adding Providers
@@ -155,7 +164,9 @@ Provider watch mode should keep the process alive, emit JSON whenever state
 changes, and use `SIGUSR1` consistently with Waybar's `signal` setting. When
 the signal disconnects the device, print the shared disconnected JSON shape and
 pause provider polling. When the next signal reconnects it, resume provider
-polling/monitoring and emit fresh battery JSON once available.
+polling/monitoring and emit fresh battery JSON once available. Providers do not
+need to implement `SIGUSR2`; the top-level command uses it to rediscover the
+current audio output for unpinned watch mode.
 
 Expected JSON shape:
 

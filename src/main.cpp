@@ -32,6 +32,16 @@ enum class DeviceKind {
 };
 
 int sony_signal_write_fd = -1;
+const char* rediscover_exec_path = nullptr;
+char** rediscover_exec_argv = nullptr;
+
+void on_rediscover_signal(int) {
+    if (rediscover_exec_path && rediscover_exec_argv) {
+        execv(rediscover_exec_path, rediscover_exec_argv);
+    }
+
+    _exit(127);
+}
 
 void on_sony_update_signal(int) {
     if (sony_signal_write_fd < 0) return;
@@ -99,7 +109,8 @@ void print_usage(std::ostream& out) {
         << "Options:\n"
         << "  --device auto|sony|airpods  Provider to use. Defaults to auto.\n"
         << "  --mac AA:BB:CC:DD:EE:FF     Use this Bluetooth MAC instead of the current audio output.\n"
-        << "  --watch                     Keep running instead of printing once. SIGUSR1 toggles connection.\n"
+        << "  --watch                     Keep running instead of printing once.\n"
+        << "                              SIGUSR1 toggles connection; SIGUSR2 rediscovers current output when no --mac is set.\n"
         << "  --interval seconds          Sony watch refresh interval. Defaults to 30, minimum 5.\n"
         << "  -v, --version               Print version and exit.\n"
         << "  -h, --help                  Show this help and exit.\n";
@@ -107,6 +118,21 @@ void print_usage(std::ostream& out) {
 
 void print_version() {
     std::cout << "waybar-earbud " << WAYBAR_EARBUD_VERSION << "\n";
+}
+
+void configure_watch_rediscovery(bool explicit_mac, char** argv) {
+    struct sigaction action {};
+    sigemptyset(&action.sa_mask);
+
+    if (explicit_mac) {
+        action.sa_handler = SIG_IGN;
+    } else {
+        rediscover_exec_path = argv[0];
+        rediscover_exec_argv = argv;
+        action.sa_handler = on_rediscover_signal;
+    }
+
+    sigaction(SIGUSR2, &action, nullptr);
 }
 
 bool parse_interval(std::string_view value, int& interval) {
@@ -225,6 +251,7 @@ std::optional<DeviceKind> auto_detect(const std::string& mac) {
 int main(int argc, char** argv) {
     DeviceKind requested = DeviceKind::Auto;
     bool watch = false;
+    bool explicit_mac = false;
     std::optional<std::string> mac;
     int interval = 0;
     int arg = 1;
@@ -262,6 +289,7 @@ int main(int argc, char** argv) {
             }
 
             mac = *parsed_mac;
+            explicit_mac = true;
             arg += 2;
             continue;
         }
@@ -304,6 +332,7 @@ int main(int argc, char** argv) {
     }
 
     if (watch && interval <= 0) interval = 30;
+    if (watch) configure_watch_rediscovery(explicit_mac, argv);
 
     if (!mac) mac = audio::default_bluetooth_mac();
 

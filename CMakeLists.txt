@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(waybar-earbud VERSION 0.1.0 LANGUAGES CXX)
+project(waybar-earbud VERSION 0.1.1 LANGUAGES CXX)
 
 include(CTest)
 
