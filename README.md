@@ -39,6 +39,20 @@ installs `waybar-earbud` to `~/.local/bin` by default. Override the
 destination with `PREFIX=/usr/local ./install.sh` or
 `BINDIR=/some/bin ./install.sh`.
 
+Uninstall from the default location:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/asrma7/waybar-earbud/main/install.sh | bash -s -- --uninstall
+```
+
+For custom install locations, pass the same destination option used during
+install:
+
+```sh
+PREFIX=/usr/local ./install.sh --uninstall
+BINDIR=/some/bin ./install.sh --uninstall
+```
+
 ## Test
 
 ```sh
