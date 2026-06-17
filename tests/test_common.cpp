@@ -21,7 +21,13 @@ int main() {
     {
         Battery battery{82, 80, 45};
         assert(battery.has_lr());
-        assert(battery.average_lr() == 81);
+        assert(battery.best_lr() == 82);
+    }
+
+    {
+        Battery battery{82, 0, 45};
+        assert(battery.has_lr());
+        assert(battery.best_lr() == 82);
     }
 
     {
@@ -34,10 +40,13 @@ int main() {
         CoutCapture capture;
         print_battery("Test Buds", Battery{82, 80, 45});
         std::string out = capture.str();
-        assert(out.find("\"text\":\"81%\"") != std::string::npos);
-        assert(out.find("L: 82%") != std::string::npos);
-        assert(out.find("R: 80%") != std::string::npos);
-        assert(out.find("Case: 45%") != std::string::npos);
+        assert(out.find("\"text\":\"82%\"") != std::string::npos);
+        assert(out.find("\"device\":\"Test Buds\"") != std::string::npos);
+        assert(out.find("\"battery\":82") != std::string::npos);
+        assert(out.find("\"left\":82") != std::string::npos);
+        assert(out.find("\"right\":80") != std::string::npos);
+        assert(out.find("\"case\":45") != std::string::npos);
+        assert(out.find("\"status\":\"connected\"") != std::string::npos);
         assert(out.find("\"class\":\"good\"") != std::string::npos);
     }
 
@@ -45,7 +54,7 @@ int main() {
         CoutCapture capture;
         print_disconnected("Earbuds");
         std::string out = capture.str();
-        assert(out == "{\"text\":\"\",\"tooltip\":\"Earbuds disconnected\",\"class\":\"disconnected\",\"alt\":\"disconnected\"}\n");
+        assert(out == "{\"text\":\"\",\"device\":\"Earbuds\",\"battery\":null,\"left\":null,\"right\":null,\"case\":null,\"status\":\"disconnected\",\"class\":\"disconnected\",\"alt\":\"disconnected\"}\n");
     }
 
     return 0;

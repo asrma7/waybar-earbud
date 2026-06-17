@@ -119,6 +119,24 @@ bool device_connected(GDBusConnection* bus, const std::string& device_path) {
     return connected;
 }
 
+std::string device_label(GDBusConnection* bus, const std::string& device_path, const std::string& fallback) {
+    for (const char* property : {"Alias", "Name"}) {
+        GVariant* value = get_device_property(bus, device_path, property);
+        if (!value) continue;
+
+        std::string label;
+        if (g_variant_is_of_type(value, G_VARIANT_TYPE_STRING)) {
+            const char* raw = g_variant_get_string(value, nullptr);
+            if (raw && *raw) label = raw;
+        }
+        g_variant_unref(value);
+
+        if (!label.empty()) return label;
+    }
+
+    return fallback;
+}
+
 void call_device_method(GDBusConnection* bus, const std::string& device_path, const char* method) {
     GErrorHolder err;
     GVariant* result = g_dbus_connection_call_sync(
@@ -206,11 +224,12 @@ public:
             return 1;
         }
 
+        label_ = device_label(bus_, device_path_, kDeviceLabel);
+
         if (!register_profile()) {
-            print_disconnected(kDeviceLabel);
+            print_disconnected(label_);
             return 1;
         }
-
         bool connected = device_connected(bus_, device_path_);
         if (connected) {
             set_connected(true);
@@ -221,7 +240,7 @@ public:
         if (watch_) {
             print_current();
         } else if (!connected) {
-            print_disconnected(kDeviceLabel);
+            print_disconnected(label_);
             unregister_profile();
             return 1;
         }
@@ -241,6 +260,7 @@ public:
 private:
     std::string mac_;
     std::string device_path_;
+    std::string label_ = kDeviceLabel;
     GDBusConnection* bus_ = nullptr;
     GDBusNodeInfo* introspection_ = nullptr;
     guint object_id_ = 0;
@@ -314,6 +334,7 @@ private:
 
         if (!result) {
             std::cerr << "airpods: profile registration failed: " << err.error->message << "\n";
+            unregister_local_profile();
             return false;
         }
 
@@ -340,6 +361,20 @@ private:
         if (signal_id_ != 0) g_dbus_connection_signal_unsubscribe(bus_, signal_id_);
         if (object_id_ != 0) g_dbus_connection_unregister_object(bus_, object_id_);
         if (introspection_) g_dbus_node_info_unref(introspection_);
+        signal_id_ = 0;
+        object_id_ = 0;
+        introspection_ = nullptr;
+    }
+
+    void unregister_local_profile() {
+        if (object_id_ != 0) {
+            g_dbus_connection_unregister_object(bus_, object_id_);
+            object_id_ = 0;
+        }
+        if (introspection_) {
+            g_dbus_node_info_unref(introspection_);
+            introspection_ = nullptr;
+        }
     }
 
     void subscribe_properties() {
@@ -465,22 +500,22 @@ private:
     }
 
     void print_current_locked() {
+        std::string json;
         if (connecting_) {
-            std::cout
-                << "{\"text\":\"\","
-                << "\"tooltip\":\"" << kDeviceLabel << " connecting...\","
-                << "\"class\":\"connecting\","
-                << "\"alt\":\"connecting\"}"
-                << std::endl;
+            emit_json(status_json(label_, "connecting", "connecting"));
             return;
         }
 
         if (!connected_) {
-            print_disconnected(kDeviceLabel);
+            emit_json(disconnected_json(label_));
             return;
         }
 
-        print_battery(kDeviceLabel, battery_);
+        emit_json(battery_json(label_, battery_));
+    }
+
+    void emit_json(const std::string& json) {
+        print_json(json);
     }
 
     void socket_reader(int fd) {
@@ -544,7 +579,7 @@ private:
 
             pos += 5;
         }
-        print_battery(kDeviceLabel, battery_);
+        emit_json(battery_json(label_, battery_));
         if (!watch_ && loop_) g_main_loop_quit(loop_);
     }
 };

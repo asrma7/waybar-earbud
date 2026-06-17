@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(waybar-earbud VERSION 0.1.1 LANGUAGES CXX)
+project(waybar-earbud VERSION 0.2.0 LANGUAGES CXX)
 
 include(CTest)
 
@@ -42,7 +42,7 @@ if (BUILD_TESTING)
 
     add_test(NAME cli_no_device COMMAND waybar-earbud)
     set_tests_properties(cli_no_device PROPERTIES
-        ENVIRONMENT "EARBUD_BATTERY_DISABLE_AUDIO_DISCOVERY=1"
+        ENVIRONMENT "EARBUD_BATTERY_DISABLE_AUDIO_DISCOVERY=1;XDG_RUNTIME_DIR=/tmp/waybar-earbud-test-no-service"
         PASS_REGULAR_EXPRESSION "\"class\":\"disconnected\""
     )
 

@@ -2,9 +2,9 @@
 
 Small Linux Waybar helper for earbud battery status.
 
-The default mode follows the current Bluetooth audio output, auto-detects the
-device type, and prints Waybar JSON with left, right, and case battery when
-available.
+`waybar-earbud` runs as one foreground service that owns Bluetooth provider
+state, then Waybar runs lightweight clients that read Waybar JSON from the
+service over a Unix socket.
 
 Supported providers:
 
@@ -34,8 +34,8 @@ From a release:
 curl -fsSL https://raw.githubusercontent.com/asrma7/waybar-earbud/main/install.sh | bash
 ```
 
-The installer downloads the matching `x86_64` or `aarch64` Linux release asset and
-installs `waybar-earbud` to `~/.local/bin` by default. Override the
+The installer downloads the matching `x86_64` or `aarch64` Linux release asset
+and installs `waybar-earbud` to `~/.local/bin` by default. Override the
 destination with `PREFIX=/usr/local ./install.sh` or
 `BINDIR=/some/bin ./install.sh`.
 
@@ -61,69 +61,118 @@ ctest --test-dir build --output-on-failure
 ```
 
 The test suite avoids real Bluetooth hardware. It covers default audio sink MAC
-parsing, shared Waybar JSON output, and the no-device CLI fallback.
+parsing, shared Waybar JSON output, and CLI behavior.
 
 ## Run
 
-Follow the current Bluetooth audio output:
+Start one service. It follows the current Bluetooth audio output by default and
+auto-detects the provider:
 
 ```sh
-./build/waybar-earbud
+waybar-earbud --service
 ```
 
-Pass a MAC address explicitly for testing:
+Run clients from Waybar or a shell:
 
 ```sh
-./build/waybar-earbud --mac AA:BB:CC:DD:EE:FF
+waybar-earbud          # print one JSON object from the service
+waybar-earbud --watch  # stream JSON updates from the service
 ```
 
-Force a provider for debugging:
+The service socket is `$XDG_RUNTIME_DIR/waybar-earbud.sock`, falling back to a
+user-scoped path under `/tmp` when `XDG_RUNTIME_DIR` is unavailable.
+
+Service options:
 
 ```sh
-./build/waybar-earbud --device sony
-./build/waybar-earbud --device airpods
-./build/waybar-earbud --device sony --mac AA:BB:CC:DD:EE:FF
-./build/waybar-earbud --device airpods --mac AA:BB:CC:DD:EE:FF
+waybar-earbud --service --device sony
+waybar-earbud --service --device airpods
+waybar-earbud --service --mac AA:BB:CC:DD:EE:FF
+waybar-earbud --service --device sony --mac AA:BB:CC:DD:EE:FF --interval 10
 ```
 
-By default the command prints one JSON object and exits. Use `--watch` to keep
-the process alive. In watch mode, `SIGUSR1` toggles the Bluetooth connection:
+`--mac` pins the service to one device. Without `--mac`, the service monitors
+the current Bluetooth audio output and re-execs itself when the output changes.
+
+Sony battery reads refresh every 30 seconds by default, with a minimum interval
+of 5 seconds. Sony connection and disconnection are event-driven through BlueZ;
+battery read failures after reconnect retry briefly before returning to the slow
+refresh interval.
+
+If the service is not running, clients emit disconnected JSON and exit in
+one-shot mode or keep retrying in `--watch` mode.
+
+Waybar custom modules only consume a fixed set of JSON fields such as `text`,
+`tooltip`, `class`, and `alt`; arbitrary fields like `left` and `case` are not
+available in Waybar's `format` string. Use a preset or client text templates to
+choose what goes into Waybar's `text`.
+
+Presets:
 
 ```sh
-./build/waybar-earbud --watch
-./build/waybar-earbud --watch --mac AA:BB:CC:DD:EE:FF
+waybar-earbud --watch --preset battery   # 82%, blank when disconnected
+waybar-earbud --watch --preset split     # L:82% R:80% C:90%, blank when disconnected
+waybar-earbud --watch --preset icon      # ◀ 82% ▶ 80% ▣:90%, blank when disconnected
 ```
 
-When `--watch` is running without `--mac`, `SIGUSR2` rediscovers the current
-Bluetooth audio output and switches to it. When `--mac` is set, `SIGUSR2` is
-ignored because the device is intentionally pinned.
+The tooltip is always the device name plus status, such as
+`WF-1000XM6 Connected`. The `alt` field is always only the status:
+`connected`, `connecting`, or `disconnected`.
 
-For Sony, `--watch` refreshes every 30 seconds unless an interval is provided:
+Advanced templates:
 
 ```sh
-./build/waybar-earbud --watch --device sony --mac AA:BB:CC:DD:EE:FF --interval 10
+waybar-earbud --watch --connected-format '{battery}%' --disconnected-format ''
+waybar-earbud --watch --connected-format 'L:{left}% R:{right}%{?case} C:{case}%{/case}' --disconnected-format ''
+waybar-earbud --watch --format '{status}'
 ```
 
-For Sony, `SIGUSR1` calls BlueZ `Disconnect`/`Connect` and pauses polling while
-manually disconnected. For AirPods, `--watch` keeps the BlueZ Profile1/AAP
-monitor alive and uses `SIGUSR1` as the connect/disconnect toggle. `SIGUSR2` is
-handled by the top-level command before provider dispatch; it restarts unpinned
-watch mode in place so the normal audio-output discovery path runs again.
+Available template fields are `{text}`, `{battery}`, `{left}`, `{right}`,
+`{case}`, `{status}`, `{class}`, `{alt}`, and `{device}`. Missing charge values
+render as an empty string. Use status-specific templates such as
+`--connected-format`, `--connecting-format`, and `--disconnected-format` when
+punctuation or suffixes should only appear for one state.
+
+Optional blocks render only when a field exists:
+
+```sh
+waybar-earbud --watch --connected-format 'L:{left}% R:{right}%{?case} C:{case}%{/case}'
+```
+
+## Signals
+
+Signals are handled by the service. Clients ignore control signals so Waybar
+modules do not exit when using `pkill`.
+
+```sh
+pkill -o -SIGUSR1 waybar-earbud  # toggle connect/disconnect
+```
 
 ## Waybar
 
-Sony one-shot module:
+Run the service once from your compositor, shell startup, or a systemd user
+unit:
+
+```sh
+waybar-earbud --service
+```
+
+Waybar module:
 
 ```json
 "custom/earbuds": {
-  "exec": "/path/to/waybar-earbud",
+  "exec": "waybar-earbud --watch --preset battery",
   "return-type": "json",
-  "interval": 30
+  "on-click": "pkill -o -SIGUSR1 waybar-earbud"
 }
 ```
 
-When no supported Bluetooth audio output is active, the helper emits empty text
-with `class: "disconnected"`:
+Do not set Waybar's `signal` option for this module. `signal` reloads the
+Waybar custom client process; service actions should be sent with the click
+commands above.
+
+When no supported Bluetooth audio output is active, the helper emits empty
+`text` and `class: "disconnected"`:
 
 ```css
 #custom-earbuds.disconnected {
@@ -132,47 +181,38 @@ with `class: "disconnected"`:
 }
 ```
 
-Persistent module that follows the current Bluetooth audio output:
+## JSON
+
+Default disconnected client JSON:
 
 ```json
-"custom/earbuds": {
-  "exec": "/path/to/waybar-earbud --watch",
-  "return-type": "json",
-  "signal": 1,
-  "on-click": "pkill -SIGUSR1 waybar-earbud",
-  "on-click-right": "pkill -SIGUSR2 waybar-earbud"
-}
+{"text":"","class":"disconnected","alt":"disconnected","tooltip":"Earbuds Disconnected"}
 ```
 
-Manual signals:
+Default connected client JSON:
 
-```sh
-pkill -SIGUSR1 waybar-earbud  # toggle connect/disconnect
-pkill -SIGUSR2 waybar-earbud  # rediscover current audio output in unpinned watch mode
+```json
+{"text":"82%","class":"good","alt":"connected","tooltip":"WF-1000XM6 Connected"}
 ```
+
+Use `--format` to render structured service fields into Waybar-supported
+`text`. The tooltip is fixed to device name plus status. The default
+`{battery}` value uses the best available earbud value rather than averaging
+left and right, because some Sony devices report `0%` for a bud that is in the
+case.
 
 ## Adding Providers
 
 Add a folder under `src/devices/<name>/` with:
 
 - a cheap `available(mac)` detector
-- a reader/monitor that emits the shared Waybar JSON shape
+- a reader or monitor that emits the shared Waybar JSON shape
 - a route in `src/main.cpp`
-- watch-mode behavior that handles `SIGUSR1` as a connect/disconnect toggle
+- service-mode behavior compatible with `SIGUSR1` as a connect/disconnect toggle
 
-Provider watch mode should keep the process alive, emit JSON whenever state
-changes, and use `SIGUSR1` consistently with Waybar's `signal` setting. When
-the signal disconnects the device, print the shared disconnected JSON shape and
-pause provider polling. When the next signal reconnects it, resume provider
-polling/monitoring and emit fresh battery JSON once available. Providers do not
-need to implement `SIGUSR2`; the top-level command uses it to rediscover the
-current audio output for unpinned watch mode.
-
-Expected JSON shape:
-
-```json
-{"text":"81%","tooltip":"Device\nL: 82%\nR: 80%\nCase: 90%","class":"good","alt":"connected"}
-```
+Provider code should use the shared `Battery` and JSON helpers in
+`src/common.hpp`. Unpinned default-output rediscovery is automatic in the
+service.
 
 ## Credits
 

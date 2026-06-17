@@ -17,12 +17,21 @@
 #include <bluetooth/rfcomm.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
+#include <gio/gio.h>
 
 #include "../../common.hpp"
 #include "../../fd.hpp"
 #include "sony.hpp"
 
 namespace {
+
+struct GErrorHolder {
+    ~GErrorHolder() {
+        if (error) g_error_free(error);
+    }
+
+    GError* error = nullptr;
+};
 
 constexpr std::string_view kSonyMdrRfcommUuid = "956C7B26-D49A-4BA8-B03F-B17D393CB6E2";
 
@@ -216,6 +225,41 @@ uint8_t find_rfcomm_channel(const std::string& mac) {
 
     if (port == 0) throw std::runtime_error("Sony MDR RFCOMM service not found");
     return port;
+}
+
+std::string bluez_device_path_for(const std::string& mac) {
+    std::string path = "/org/bluez/hci0/dev_";
+    for (char ch : mac) path += ch == ':' ? '_' : ch;
+    return path;
+}
+
+bool device_connected(const std::string& mac) {
+    GErrorHolder err;
+    GDBusConnection* bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, &err.error);
+    if (!bus) return false;
+
+    GVariant* result = g_dbus_connection_call_sync(
+        bus,
+        "org.bluez",
+        bluez_device_path_for(mac).c_str(),
+        "org.freedesktop.DBus.Properties",
+        "Get",
+        g_variant_new("(ss)", "org.bluez.Device1", "Connected"),
+        G_VARIANT_TYPE("(v)"),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        nullptr,
+        &err.error);
+
+    g_object_unref(bus);
+    if (!result) return false;
+
+    GVariant* value = nullptr;
+    g_variant_get(result, "(v)", &value);
+    bool connected = g_variant_get_boolean(value);
+    g_variant_unref(value);
+    g_variant_unref(result);
+    return connected;
 }
 
 bool wait_fd(int fd, short events, std::chrono::milliseconds timeout) {
@@ -415,6 +459,10 @@ bool available(const std::string& mac) {
     } catch (...) {
         return false;
     }
+}
+
+bool connected(const std::string& mac) {
+    return device_connected(mac);
 }
 
 Battery read_battery(const std::string& mac) {
