@@ -77,6 +77,7 @@ Run clients from Waybar or a shell:
 ```sh
 waybar-earbud          # print one JSON object from the service
 waybar-earbud --watch  # stream JSON updates from the service
+waybar-earbud --toggle # toggle service connect/disconnect
 ```
 
 The service socket is `$XDG_RUNTIME_DIR/waybar-earbud.sock`, falling back to a
@@ -139,13 +140,13 @@ Optional blocks render only when a field exists:
 waybar-earbud --watch --connected-format 'L:{left}% R:{right}%{?case} C:{case}%{/case}'
 ```
 
-## Signals
+## Toggle
 
-Signals are handled by the service. Clients ignore control signals so Waybar
-modules do not exit when using `pkill`.
+Use the client toggle command for Waybar clicks. It sends a control request to
+the service over the same Unix socket used for JSON updates.
 
 ```sh
-pkill -o -SIGUSR1 waybar-earbud  # toggle connect/disconnect
+waybar-earbud --toggle
 ```
 
 ## Waybar
@@ -163,13 +164,13 @@ Waybar module:
 "custom/earbuds": {
   "exec": "waybar-earbud --watch --preset battery",
   "return-type": "json",
-  "on-click": "pkill -o -SIGUSR1 waybar-earbud"
+  "on-click": "waybar-earbud --toggle"
 }
 ```
 
 Do not set Waybar's `signal` option for this module. `signal` reloads the
-Waybar custom client process; service actions should be sent with the click
-commands above.
+Waybar custom client process; service actions should be sent through
+`waybar-earbud --toggle`.
 
 When no supported Bluetooth audio output is active, the helper emits empty
 `text` and `class: "disconnected"`:
@@ -208,7 +209,7 @@ Add a folder under `src/devices/<name>/` with:
 - a cheap `available(mac)` detector
 - a reader or monitor that emits the shared Waybar JSON shape
 - a route in `src/main.cpp`
-- service-mode behavior compatible with `SIGUSR1` as a connect/disconnect toggle
+- service-mode behavior compatible with `--toggle` as a connect/disconnect toggle
 
 Provider code should use the shared `Battery` and JSON helpers in
 `src/common.hpp`. Unpinned default-output rediscovery is automatic in the

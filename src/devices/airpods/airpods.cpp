@@ -246,11 +246,12 @@ public:
         }
 
         loop_ = g_main_loop_new(nullptr, false);
-        g_unix_signal_add(SIGUSR1, &AirpodsMonitor::on_toggle_signal, this);
+        set_toggle_handler([this] { toggle_connection(); });
         g_unix_signal_add(SIGTERM, &AirpodsMonitor::on_quit_signal, this);
         g_unix_signal_add(SIGINT, &AirpodsMonitor::on_quit_signal, this);
         g_main_loop_run(loop_);
 
+        set_toggle_handler({});
         unregister_profile();
         g_main_loop_unref(loop_);
         loop_ = nullptr;
@@ -271,12 +272,6 @@ private:
     bool watch_ = false;
     bool connected_ = false;
     bool connecting_ = false;
-
-    static gboolean on_toggle_signal(gpointer user_data) {
-        auto* self = static_cast<AirpodsMonitor*>(user_data);
-        self->toggle_connection();
-        return G_SOURCE_CONTINUE;
-    }
 
     static gboolean on_quit_signal(gpointer user_data) {
         auto* self = static_cast<AirpodsMonitor*>(user_data);

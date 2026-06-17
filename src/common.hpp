@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <functional>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <string>
 
@@ -120,6 +121,32 @@ inline std::function<void(const std::string&)>& json_sink() {
 
 inline void set_json_sink(std::function<void(const std::string&)> sink) {
     json_sink() = std::move(sink);
+}
+
+inline std::function<void()>& toggle_handler() {
+    static std::function<void()> handler;
+    return handler;
+}
+
+inline std::mutex& toggle_handler_mutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+inline void set_toggle_handler(std::function<void()> handler) {
+    std::lock_guard lock(toggle_handler_mutex());
+    toggle_handler() = std::move(handler);
+}
+
+inline bool invoke_toggle_handler() {
+    std::function<void()> handler;
+    {
+        std::lock_guard lock(toggle_handler_mutex());
+        handler = toggle_handler();
+    }
+    if (!handler) return false;
+    handler();
+    return true;
 }
 
 inline void print_json(const std::string& json) {

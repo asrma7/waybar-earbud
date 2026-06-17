@@ -2,7 +2,6 @@
 #include <chrono>
 #include <cctype>
 #include <cerrno>
-#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -42,6 +41,7 @@ struct Options {
     DeviceKind device = DeviceKind::Auto;
     bool service = false;
     bool watch = false;
+    bool toggle = false;
     bool explicit_mac = false;
     std::optional<std::string> mac;
     std::string format = "{text}";
@@ -63,6 +63,7 @@ struct SonyWatchState {
     std::mutex mutex;
     std::string label = "Sony earbuds";
     bool connected = false;
+    bool connecting = false;
     bool reading = false;
     unsigned int generation = 0;
     int interval = 30;
@@ -71,7 +72,7 @@ struct SonyWatchState {
 
 constexpr int kSonyBatteryRetrySeconds = 2;
 
-int sony_signal_write_fd = -1;
+int sony_toggle_write_fd = -1;
 
 struct JsonState {
     std::string text;
@@ -140,6 +141,7 @@ void print_usage(std::ostream& out) {
         << "  --device auto|sony|airpods  Provider to use in service mode. Defaults to auto.\n"
         << "  --mac AA:BB:CC:DD:EE:FF     Pin service to this Bluetooth MAC instead of current audio output.\n"
         << "  --watch                     Client mode: stream JSON from the service.\n"
+        << "  --toggle                    Client mode: toggle service connect/disconnect and exit.\n"
         << "  --preset battery|split|icon\n"
         << "  --format template           Client text template. Defaults to {text}.\n"
         << "  --connected-format template\n"
@@ -567,6 +569,11 @@ private:
         auto command = read_line(client.get(), 1000);
         if (!command) return;
 
+        if (*command == "TOGGLE") {
+            invoke_toggle_handler();
+            return;
+        }
+
         std::lock_guard lock(mutex_);
         write_line(client.get(), current_json_);
         if (*command == "WATCH") {
@@ -590,26 +597,12 @@ void service_emit_json(const std::string& json) {
     _exit(127);
 }
 
-void on_sony_update_signal(int) {
-    if (sony_signal_write_fd < 0) return;
-
-    const uint8_t byte = 1;
-    ssize_t written = write(sony_signal_write_fd, &byte, sizeof(byte));
-    (void)written;
-}
-
-void ignore_client_control_signals() {
-    struct sigaction action {};
-    action.sa_handler = SIG_IGN;
-    sigemptyset(&action.sa_mask);
-    sigaction(SIGUSR1, &action, nullptr);
-}
-
 void start_default_output_monitor(std::optional<std::string> current_mac) {
     std::thread([current_mac = std::move(current_mac)] {
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(2));
             auto next_mac = audio::default_bluetooth_mac();
+            if (!next_mac) continue;
             if (next_mac == current_mac) continue;
             rediscover_exec();
         }
@@ -651,6 +644,7 @@ void on_sony_properties_changed(GDBusConnection*,
     if (is_connected == state->connected) return;
 
     state->connected = is_connected;
+    state->connecting = false;
     ++state->generation;
     if (!is_connected) state->reading = false;
     state->next_refresh = is_connected ? now : now + std::chrono::seconds(state->interval);
@@ -700,10 +694,29 @@ void start_sony_battery_read(const std::string& mac, SonyWatchState& state) {
         }
 
         state.connected = false;
+        state.connecting = false;
         ++state.generation;
         state.next_refresh = now + std::chrono::seconds(state.interval);
         print_disconnected(state.label);
     }).detach();
+}
+
+void finish_sony_connect_attempt(const std::string& mac, SonyWatchState& state, unsigned int generation) {
+    bool connected = devices::sony::connected(mac);
+    auto now = std::chrono::steady_clock::now();
+
+    std::lock_guard lock(state.mutex);
+    if (state.generation != generation) return;
+
+    state.connecting = false;
+    state.connected = connected;
+    state.next_refresh = connected ? now : now + std::chrono::seconds(state.interval);
+
+    if (connected) {
+        print_json(battery_json(state.label, Battery{}));
+    } else {
+        print_disconnected(state.label);
+    }
 }
 
 bool call_bluez_device_method(const std::string& mac, const char* method) {
@@ -744,13 +757,20 @@ int run_sony_service(const std::string& mac, int interval) {
 
     int pipe_fds[2] = {-1, -1};
     if (pipe2(pipe_fds, O_NONBLOCK | O_CLOEXEC) != 0) {
-        std::cerr << "sony: failed to set up SIGUSR1 wake pipe\n";
+        std::cerr << "sony: failed to set up toggle pipe\n";
         return 1;
     }
 
     Fd read_fd(pipe_fds[0]);
     Fd write_fd(pipe_fds[1]);
-    sony_signal_write_fd = write_fd.get();
+    sony_toggle_write_fd = write_fd.get();
+    set_toggle_handler([] {
+        if (sony_toggle_write_fd < 0) return;
+
+        const uint8_t byte = 1;
+        ssize_t written = write(sony_toggle_write_fd, &byte, sizeof(byte));
+        (void)written;
+    });
 
     SonyWatchState state;
     state.label = bluez_device_label(mac, "Sony earbuds");
@@ -784,13 +804,7 @@ int run_sony_service(const std::string& mac, int interval) {
         print_json(battery_json(state.label, Battery{}));
     }
 
-    struct sigaction action {};
-    action.sa_handler = on_sony_update_signal;
-    sigemptyset(&action.sa_mask);
-    action.sa_flags = SA_RESTART;
-    sigaction(SIGUSR1, &action, nullptr);
-
-    auto wait_for_signal = [&](std::chrono::milliseconds timeout) {
+    auto wait_for_toggle = [&](std::chrono::milliseconds timeout) {
         pollfd pfd{.fd = read_fd.get(), .events = POLLIN, .revents = 0};
         while (true) {
             int rc = poll(&pfd, 1, static_cast<int>(timeout.count()));
@@ -819,31 +833,38 @@ int run_sony_service(const std::string& mac, int interval) {
         }
         if (read_battery) start_sony_battery_read(mac, state);
 
-        if (wait_for_signal(std::chrono::milliseconds(100))) {
+        if (wait_for_toggle(std::chrono::milliseconds(100))) {
             bool connected = false;
+            bool connecting = false;
             {
                 std::lock_guard lock(state.mutex);
                 connected = state.connected;
+                connecting = state.connecting;
             }
 
-            if (connected) {
+            if (connected || connecting) {
                 {
                     std::lock_guard lock(state.mutex);
                     state.connected = false;
+                    state.connecting = false;
                     state.reading = false;
                     ++state.generation;
                     print_disconnected(state.label);
                 }
                 std::thread([mac] { call_bluez_device_method(mac, "Disconnect"); }).detach();
             } else {
+                unsigned int generation = 0;
                 {
                     std::lock_guard lock(state.mutex);
-                    state.connected = true;
+                    state.connecting = true;
                     ++state.generation;
-                    state.next_refresh = std::chrono::steady_clock::now();
-                    print_json(battery_json(state.label, Battery{}));
+                    generation = state.generation;
+                    print_json(status_json(state.label, "connecting", "connecting"));
                 }
-                std::thread([mac] { call_bluez_device_method(mac, "Connect"); }).detach();
+                std::thread([mac, &state, generation] {
+                    call_bluez_device_method(mac, "Connect");
+                    finish_sony_connect_attempt(mac, state, generation);
+                }).detach();
             }
         }
     }
@@ -883,8 +904,6 @@ Fd connect_service_socket() {
 }
 
 int run_client_once(const Options& options) {
-    ignore_client_control_signals();
-
     Fd fd = connect_service_socket();
     if (!fd) {
         print_json(client_json(disconnected_json("Earbuds"), options));
@@ -902,8 +921,6 @@ int run_client_once(const Options& options) {
 }
 
 int run_client_watch(const Options& options) {
-    ignore_client_control_signals();
-
     std::string last;
 
     while (true) {
@@ -927,6 +944,14 @@ int run_client_watch(const Options& options) {
 
         sleep(1);
     }
+}
+
+int run_client_toggle() {
+    Fd fd = connect_service_socket();
+    if (!fd) return 1;
+
+    write_all(fd.get(), "TOGGLE\n");
+    return 0;
 }
 
 int run_service(const Options& options, char** argv) {
@@ -985,6 +1010,12 @@ std::optional<Options> parse_args(int argc, char** argv) {
 
         if (current == "--watch") {
             options.watch = true;
+            ++arg;
+            continue;
+        }
+
+        if (current == "--toggle") {
+            options.toggle = true;
             ++arg;
             continue;
         }
@@ -1115,6 +1146,7 @@ int main(int argc, char** argv) {
     if (!options) return 2;
 
     if (options->service) return run_service(*options, argv);
+    if (options->toggle) return run_client_toggle();
     if (options->watch) return run_client_watch(*options);
     return run_client_once(*options);
 }
