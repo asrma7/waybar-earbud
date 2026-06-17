@@ -172,7 +172,7 @@ bool apply_preset(Options& options, std::string_view preset) {
     }
 
     if (preset == "icon") {
-        options.connected_format = "\U000f184f{?left} \U000f0c0d {left}%{/left}{?right} \U000f0c1f {right}%{/right}{?case} C:{case}%{/case}";
+        options.connected_format = "\U000f184f{?left} \U000f0c0d  {left}%{/left}{?right} \U000f0c1f  {right}%{/right}{?case} \uED75  {case}%{/case}";
         options.connecting_format = "\U000f184f";
         options.disconnected_format = "\U000f1850";
         return true;
