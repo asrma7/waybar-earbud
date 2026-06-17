@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo="asrma7/waybar-earbud"
 version="${EARBUD_BATTERY_VERSION:-latest}"
-prefix="${PREFIX:-$HOME/.local}"
+prefix="${PREFIX:-/usr/local}"
 bindir="${BINDIR:-}"
 uninstall=false
 
@@ -15,7 +15,7 @@ Installs waybar-earbud from GitHub release assets.
 
 Options:
   --version tag       Release tag to install. Defaults to latest.
-  --prefix path       Install prefix. Defaults to ~/.local.
+  --prefix path       Install prefix. Defaults to /usr/local.
   --bindir path       Binary install directory. Defaults to <prefix>/bin.
   --uninstall         Remove waybar-earbud from the install directory.
   -h, --help          Show this help.

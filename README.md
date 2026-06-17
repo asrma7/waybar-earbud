@@ -35,9 +35,8 @@ curl -fsSL https://raw.githubusercontent.com/asrma7/waybar-earbud/main/install.s
 ```
 
 The installer downloads the matching `x86_64` or `aarch64` Linux release asset
-and installs `waybar-earbud` to `~/.local/bin` by default. Override the
-destination with `PREFIX=/usr/local ./install.sh` or
-`BINDIR=/some/bin ./install.sh`.
+and installs `waybar-earbud` to `/usr/local/bin` by default. Override the
+destination with `PREFIX=$HOME/.local ./install.sh` or `BINDIR=/some/bin ./install.sh`.
 
 Uninstall from the default location:
 
@@ -49,7 +48,7 @@ For custom install locations, pass the same destination option used during
 install:
 
 ```sh
-PREFIX=/usr/local ./install.sh --uninstall
+PREFIX=$HOME/.local ./install.sh --uninstall
 BINDIR=/some/bin ./install.sh --uninstall
 ```
 
