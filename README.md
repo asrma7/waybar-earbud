@@ -113,7 +113,7 @@ Presets:
 ```sh
 waybar-earbud --watch --preset battery   # 82%, blank when disconnected
 waybar-earbud --watch --preset split     # L:82% R:80% C:90%, blank when disconnected
-waybar-earbud --watch --preset icon      # ◀ 82% ▶ 80% ▣:90%, blank when disconnected
+waybar-earbud --watch --preset icon      # 󱡏 󰰍 82% 󰰟 80% C:90%, 󱡐 when disconnected
 ```
 
 The tooltip is always the device name plus status, such as
